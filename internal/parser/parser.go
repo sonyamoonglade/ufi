@@ -44,6 +44,10 @@ func Run() error {
 		}
 
 		if consumeStruct {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
 			structSourceRows = append(structSourceRows, strings.TrimSpace(line))
 		}
 	}
@@ -145,8 +149,8 @@ func isValidQfKind(kind string) bool {
 }
 
 const (
-	_tagQfKind = "qf-kind"
-	_tagQfKey  = "qf-key"
+	_tagNameKind = "kind"
+	_tagNameKey  = "key"
 )
 
 type utiQueryFilter struct {
@@ -156,23 +160,27 @@ type utiQueryFilter struct {
 
 func parseFilterTag(s string) utiQueryFilter {
 	s = strings.Trim(s, "`")
-	s = strings.Trim(s, "uti:")
+	s = strings.Trim(s, "ufi:")
 	s = strings.Trim(s, `"`)
 	splitted := strings.Split(s, ";")
 	res := utiQueryFilter{}
 	for _, pair := range splitted {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
 		splittedPair := strings.Split(pair, "=")
 		if len(splittedPair) != 2 {
-			log.Printf("ignoring qf-pair: [%s]", pair)
+			log.Printf("ignoring qf-pair: [%v;%d]", splittedPair, len(splittedPair))
 			continue
 		}
 
 		key, value := splittedPair[0], splittedPair[1]
-		if key == _tagQfKey {
+		if key == _tagNameKey {
 			res._key = value
 		}
 
-		if key == _tagQfKind {
+		if key == _tagNameKind {
 			valueSplitted := strings.Split(value, ",")
 			for _, kind := range valueSplitted {
 				if kind == "" {
@@ -335,7 +343,18 @@ func generateConstKeys(fields []_field, structFieldMap map[string][]parserField)
 			}
 		}
 	}
-	return strings.Join(rows, "\n"), parserFieldToConst
+
+	uniqueRows := make(map[string]struct{})
+	uRows := make([]string, len(rows))
+	for _, row := range rows {
+		if _, ok := uniqueRows[row]; ok {
+			continue
+		}
+		uniqueRows[row] = struct{}{}
+		uRows = append(uRows, row)
+	}
+
+	return strings.Join(uRows, "\n"), parserFieldToConst
 }
 
 func generateParserFunc(structName string, fields []_field, structFieldsMap map[string][]parserField, qfConstKeyMap map[parserField]string) string {
@@ -426,7 +445,8 @@ func GenerateCode(pkg, structName string, fields []_field) (string, error) {
 
 	var parsers []string
 	for t := range uniqueTypes {
-		parsers = append(parsers, generateQueryValueParserForGoType(t))
+		p := generateQueryValueParserForGoType(t)
+		parsers = append(parsers, p)
 	}
 
 	constantsDef, parserFieldToConstMap := generateConstKeys(fields, structFieldMap)
@@ -475,6 +495,7 @@ var goTypeParserFuncs = map[string]string{
 	"[]uint32":  "gsliceuintparse",
 	"uint64":    "guintparse",
 	"[]uint64":  "gsliceuintparse",
+	"float":     "gfloatparse",
 	"float32":   "gfloatparse",
 	"float64":   "gfloatparse",
 	"time.Time": "vtimeparse",
@@ -498,7 +519,7 @@ func guintparse[I uint|uint32|uint64](inp string) I {
 	return I(v)
 }`
 	genericFloatParseFunc = `
-func gfloatparse[I float32 | float64](inp string) I {
+func gfloatparse[I float32|float64](inp string) I {
 	v, err := strconv.ParseFloat(inp, 64)
 	if err != nil {
 		return *new(I)
@@ -546,7 +567,7 @@ func generateQueryValueParserForGoType(goType string) string {
 		return genericUintParseFunc
 	case "[]uint", "[]uint64", "[]uint32":
 		return genericUintSliceParseFunc
-	case "float32", "float64":
+	case "float", "float32", "float64":
 		return genericFloatParseFunc
 	case "[]float32", "[]float64":
 		return genericFloatSliceParseFunc

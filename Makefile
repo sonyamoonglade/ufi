@@ -1,2 +1,2 @@
 install:
-	go install cmd/ufi.go
+	go install cmd/ufi/ufi.go
